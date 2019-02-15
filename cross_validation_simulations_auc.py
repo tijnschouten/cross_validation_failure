@@ -8,9 +8,9 @@ import numpy as np
 from scipy import ndimage
 
 from joblib import Parallel, delayed, Memory
-from sklearn.model_selection import (GroupShuffleSplit, LeaveOneOut,
-        cross_val_score)
-from sklearn.metrics import accuracy_score
+from sklearn.model_selection import (GroupShuffleSplit, RepeatedKFold, LeaveOneOut,
+        cross_val_score, cross_val_predict)
+from sklearn.metrics import roc_auc_score
 from sklearn.svm import LinearSVC
 
 def mk_data(n_samples=200, random_state=0, separability=1,
@@ -27,17 +27,28 @@ def mk_data(n_samples=200, random_state=0, separability=1,
     X = separability * centers[y] + noise
     return X, y
 
+# create linearSVC that outputs continuous values for decision function for AUC
+class LinearSVC_continuous(LinearSVC):
+    def predict(self, X):
+        return super(LinearSVC_continuous, self).decision_function(X)
+
 
 ###############################################################################
 # Code to run the cross-validations
 
+# below parameters tuned for AUC ~ 0.90, N=250, noise_corr=0, dim=300, sep=6.25
+train_size = 250
+noise_corr = 0
+dim=300
+sep=6.25
+random_state=0
 
 def sample_and_cross_val_clf(train_size=200, noise_corr=2, dim=3, sep=.5,
                              random_state=0):
     """ Runs an experiments and returns the corresponding lines in
         the results dataframe.
     """
-    clf = LinearSVC(penalty='l2', fit_intercept=True)
+    clf = LinearSVC_continuous(penalty='l2', fit_intercept=True)
 
     n_samples = train_size + 10000
     X, y = mk_data(n_samples=n_samples,
@@ -48,19 +59,32 @@ def sample_and_cross_val_clf(train_size=200, noise_corr=2, dim=3, sep=.5,
     X_test = X[train_size:]
     y_test = y[train_size:]
 
-    validation_score = accuracy_score(
+    validation_score = roc_auc_score(
                             y_test,
                             clf.fit(X_train, y_train).predict(X_test))
 
-    # Create 10 blocks of evenly-spaced labels for GroupShuffleSplit
+#    # Create 10 blocks of evenly-spaced labels for GroupShuffleSplit
     groups = np.arange(train_size) // (train_size // 10)
-
+    
     scores = list()
-    for name, cv in [('loo', LeaveOneOut()),
+    for name, cv in [('10 repeated 10-fold', 
+                      RepeatedKFold(n_splits=10, n_repeats=10, 
+                                              random_state=random_state)),
                      ('50 splits',
-                      GroupShuffleSplit(n_splits=50, random_state=0))]:
-        this_scores = cross_val_score(clf, X_train, y_train, cv=cv,
-                                      groups=groups)
+                      GroupShuffleSplit(n_splits=50, random_state=random_state))]:
+        try:                 
+            cv_scores = cross_val_score(clf, X_train, y_train, groups=groups, 
+                                    scoring='roc_auc', cv=cv)
+        except:
+            if name == '10 repeated 10-fold':
+                try:
+                    cv_scores = [roc_auc_score(y_train, cross_val_predict(clf, X_train, y_train, groups=groups, cv=10))]
+                except:
+                    cv_scores = [np.nan]
+            else:
+                cv_scores = [np.nan]
+                
+            
         scores.append(dict(
             cv_name=name,
             validation_score=validation_score,
@@ -68,8 +92,8 @@ def sample_and_cross_val_clf(train_size=200, noise_corr=2, dim=3, sep=.5,
             dim=dim,
             noise_corr=noise_corr,
             sep=sep,
-            score_error=(np.mean(this_scores) - validation_score),
-            score_sem=(np.std(this_scores) / np.sqrt(len(this_scores))),
+            score_error=(np.mean(cv_scores) - validation_score),
+            score_sem=(np.std(cv_scores) / np.sqrt(len(cv_scores)))
             ))
 
     return scores
@@ -102,7 +126,7 @@ if __name__ == '__main__':
 ###############################################################################
 # Run the simulations
 
-N_JOBS = -1
+N_JOBS = 16
 N_DRAWS = 10000
 mem = Memory(cachedir='cache')
 
@@ -112,10 +136,10 @@ results = pandas.DataFrame(
              'noise_corr', 'sep', 'score_error', 'score_sem'])
 
 
-for sep in (5., ):
- for train_size in (30, 100, 300, 1000):
+for sep in (6.25, ):
+ for train_size in (30, 100, 200, 250, 300, 1000):
     # Cap computing time
-    n_draws = N_DRAWS if train_size < 500 else N_DRAWS / 10
+    n_draws = N_DRAWS if train_size < 500 else N_DRAWS // 10
     scores = Parallel(n_jobs=N_JOBS, verbose=10)(
                     delayed(mem.cache(sample_and_cross_val_clf))(
                             train_size=train_size,
@@ -125,6 +149,6 @@ for sep in (5., ):
     for line in scores:
         results = results.append(line)
 
-results.to_csv('cross_validation_results.csv')
+results.to_csv('cross_validation_results_auc_{}_draws.csv'.format(N_DRAWS))
 
 
