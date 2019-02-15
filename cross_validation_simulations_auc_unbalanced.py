@@ -16,7 +16,7 @@ from sklearn.svm import LinearSVC
 def mk_data(n_samples=200, random_state=0, separability=1,
             noise_corr=2, dim=100):
     rng = np.random.RandomState(random_state)
-    y = rng.random_integers(0, 1, size=n_samples)
+    y = np.array([1 if i<77 else 0 for i in rng.random_integers(0, 249, size=n_samples)])
     noise = rng.normal(size=(n_samples, dim))
     if not noise_corr is None and noise_corr > 0:
         noise = ndimage.gaussian_filter1d(noise, noise_corr, axis=0)
@@ -83,7 +83,6 @@ def sample_and_cross_val_clf(train_size=200, noise_corr=2, dim=3, sep=.5,
                     cv_scores = [np.nan]
             else:
                 cv_scores = [np.nan]
-                
             
         scores.append(dict(
             cv_name=name,
@@ -118,7 +117,7 @@ if __name__ == '__main__':
     plt.yticks(())
     plt.xlabel('X1', size=25)
     plt.ylabel('X2', size=25)
-    plt.savefig('simulated_data.pdf',
+    plt.savefig('simulated_data_unbalanced.pdf',
                 edgecolor='none', facecolor='none')
 
 
@@ -128,7 +127,7 @@ if __name__ == '__main__':
 
 N_JOBS = 16
 N_DRAWS = 10000
-mem = Memory(cachedir='cache')
+mem = Memory(cachedir='cache_unbalanced')
 
 
 results = pandas.DataFrame(
@@ -149,6 +148,6 @@ for sep in (6.25, ):
     for line in scores:
         results = results.append(line)
 
-results.to_csv('cross_validation_results_auc_{}_draws.csv'.format(N_DRAWS))
+results.to_csv('cross_validation_results_auc_{}_draws_unbalanced.csv'.format(N_DRAWS))
 
 
